@@ -51,6 +51,7 @@ const BG_COLOR_CODE: [i8; 8] = [
 
 const GOOG: &str = include_str!("./goog-ascii-art.txt");
 const SPEED: i16 = 1;
+const WAIT: u64 = 50;
 
 struct Vec2(i16, i16);
 
@@ -70,8 +71,8 @@ struct Goog {
 impl Goog {
     fn new() -> Self {
         Goog {
-            pos: Vec2::new(1, 1), // from top left corner
-            size: Vec2::new(50, 50),
+            pos: Vec2::new(1, 1),    // from top left corner
+            size: Vec2::new(50, 24), // width, height in characters count of the ascii art
             velocity_mul: Vec2::new(1, 1),
             speed: SPEED,
         }
@@ -153,23 +154,33 @@ async fn main() {
     .unwrap();
     stdout.flush().unwrap();
 
-    let screen_size = terminal_size().unwrap();
-    let screen_size = Vec2::new(screen_size.0 as i16, screen_size.1 as i16);
-
     let mut goog = Goog::new();
-
-    let color = FG_COLOR_CODE[7];
-    let mode = MODE_CODE[0];
+    let mut color = FG_COLOR_CODE[random_range(..FG_COLOR_CODE.len() - 1)];
 
     loop {
-        let collision = goog.is_collide(&screen_size);
-        goog.apply_collision(&collision);
-        goog.apply_velocity();
-
-        write!(stdout, "{}", termion::clear::All).unwrap();
+        if let Ok(e) = rx.try_recv()
+            && e
+        {
+            break;
+        }
 
         write!(stdout, "\x1b[?2026h").unwrap();
         stdout.flush().unwrap();
+
+        for (i, _) in GOOG.lines().enumerate() {
+            write!(
+                stdout,
+                "{}{}{}{}",
+                termion::cursor::Goto(goog.pos.0 as u16, goog.pos.1 as u16 + i as u16),
+                termion::clear::BeforeCursor,
+                termion::cursor::Goto(
+                    goog.pos.0 as u16 + goog.size.0 as u16,
+                    goog.pos.1 as u16 + i as u16
+                ),
+                termion::clear::AfterCursor,
+            )
+            .unwrap();
+        }
 
         for (i, l) in GOOG.lines().enumerate() {
             write!(
@@ -178,11 +189,10 @@ async fn main() {
                 termion::cursor::Goto(goog.pos.0 as u16, goog.pos.1 as u16 + i as u16),
             )
             .unwrap();
-
             write!(
                 stdout,
-                "{}[{}{}m{}{}{}",
-                ESC_CODE, color, mode, l, ESC_CODE, CLEAR_CODE
+                "{}[{}m{}{}{}",
+                ESC_CODE, color, l, ESC_CODE, CLEAR_CODE
             )
             .unwrap();
         }
@@ -190,12 +200,17 @@ async fn main() {
         write!(stdout, "\x1b[?2026l").unwrap();
         stdout.flush().unwrap();
 
-        tokio::time::sleep(Duration::from_millis(11)).await;
+        let screen_size = terminal_size().unwrap();
+        let screen_size = Vec2::new(screen_size.0 as i16, screen_size.1 as i16);
+        let collision = goog.is_collide(&screen_size);
 
-        if let Ok(e) = rx.try_recv()
-            && e
-        {
-            break;
+        if collision.0.is_some() || collision.1.is_some() {
+            color = FG_COLOR_CODE[random_range(..FG_COLOR_CODE.len() - 1)];
         }
+
+        goog.apply_collision(&collision);
+        goog.apply_velocity();
+
+        tokio::time::sleep(Duration::from_millis(WAIT)).await;
     }
 }
