@@ -2,16 +2,17 @@ use std::io::{self, Write};
 use std::time::Duration;
 
 use rand::random_range;
+
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 use termion::terminal_size;
+
 use tokio::sync::oneshot;
 
 const ESC_CODE: &str = "\x1b";
 const CLEAR_CODE: &str = "[0m";
 
-#[allow(dead_code)]
 const FG_COLOR_CODE: [i8; 8] = [
     30, // black
     31, // red
@@ -23,9 +24,7 @@ const FG_COLOR_CODE: [i8; 8] = [
     37, // white
 ];
 
-const GOOG: &str = include_str!("./goog-ascii-art.txt");
 const SPEED: i16 = 1;
-const WAIT: u64 = 50;
 
 struct IVec2(i16, i16);
 struct UVec2(u16, u16);
@@ -47,16 +46,51 @@ struct Goog {
     size: UVec2,
     velocity_mul: IVec2,
     speed: i16,
+    goog: &'static str,
+    delay: u64,
+    change_color: bool,
+    disabled: bool,
 }
 
+const GOOG_TINY: &str = include_str!("../goog/goog-8");
+const GOOG_SMALL: &str = include_str!("../goog/goog-16");
+const GOOG_MEDIUM: &str = include_str!("../goog/goog-24");
+const GOOG_BIG: &str = include_str!("../goog/goog-32");
+const GOOG_HUGE: &str = include_str!("../goog/goog-32");
+
 impl Goog {
-    fn new() -> Self {
-        Goog {
-            pos: UVec2::new(1, 1),    // from top left corner
-            size: UVec2::new(50, 24), // width, height in characters count of the ascii art
+    fn new(size: Option<&str>, delay: Option<u64>, change_color: bool, disabled: bool) -> Self {
+        let mut goog = Goog {
+            pos: UVec2::new(1, 1),  // from top left corner
+            size: UVec2::new(0, 0), // width, height in characters count of the ascii art
             velocity_mul: IVec2::new(1, 1),
             speed: SPEED,
+            goog: GOOG_MEDIUM,
+            delay: 40,
+            change_color,
+            disabled,
+        };
+
+        if let Some(delay) = delay {
+            goog.delay = delay;
         }
+
+        if let Some(s) = size {
+            goog.goog = match s {
+                "tiny" => GOOG_TINY,
+                "small" => GOOG_SMALL,
+                "medium" => GOOG_MEDIUM,
+                "big" => GOOG_BIG,
+                "huge" => GOOG_HUGE,
+                _ => GOOG_MEDIUM,
+            };
+        }
+
+        let mut iter = goog.goog.lines();
+        goog.size.0 = iter.nth(0).unwrap().chars().count() as u16;
+        goog.size.1 = iter.count() as u16 + 1;
+
+        goog
     }
 
     fn is_collide(&self, screen_size: &UVec2) -> Collision {
@@ -109,8 +143,33 @@ enum VCollide {
     Bottom,
 }
 
+use clap::Parser;
+
+/// Goog... (Esc to escape)
+#[derive(Parser)]
+#[command()]
+struct Cli {
+    /// delay between each "frames" (in milliseconds) (also makes escaping take longer)
+    #[arg(short, long)]
+    delay: Option<u64>,
+
+    /// goog... size (tiny, small, medium, big, huge)
+    #[arg(short, long)]
+    size: Option<String>,
+
+    /// whether to change color each bounce
+    #[arg(short, long)]
+    color: bool,
+
+    /// remove his ability to move (...why would you do this. you monster.)
+    #[arg(long)]
+    disable: bool,
+}
+
 #[tokio::main]
 async fn main() {
+    let args = Cli::parse();
+
     let (tx, mut rx) = oneshot::channel::<bool>();
 
     tokio::spawn(async move {
@@ -135,13 +194,14 @@ async fn main() {
     .unwrap();
     stdout.flush().unwrap();
 
-    let mut goog = Goog::new();
+    let mut goog = Goog::new(args.size.as_deref(), args.delay, args.color, args.disable);
     let mut color = FG_COLOR_CODE[random_range(..FG_COLOR_CODE.len() - 1)];
 
     loop {
         if let Ok(e) = rx.try_recv()
             && e
         {
+            write!(stdout, "{}", termion::cursor::Show).unwrap();
             break;
         }
 
@@ -158,7 +218,7 @@ async fn main() {
             .unwrap();
         } // only clearing the using lines
 
-        for (i, l) in GOOG.lines().enumerate() {
+        for (i, l) in goog.goog.lines().enumerate() {
             write!(
                 stdout,
                 "{}",
@@ -180,13 +240,15 @@ async fn main() {
         let screen_size = UVec2::new(screen_size.0, screen_size.1);
         let collision = goog.is_collide(&screen_size);
 
-        if collision.0.is_some() || collision.1.is_some() {
+        if goog.change_color && (collision.0.is_some() || collision.1.is_some()) {
             color = FG_COLOR_CODE[random_range(..FG_COLOR_CODE.len() - 1)];
         }
 
-        goog.apply_collision(&collision);
-        goog.apply_velocity();
+        if !goog.disabled {
+            goog.apply_collision(&collision);
+            goog.apply_velocity();
+        }
 
-        tokio::time::sleep(Duration::from_millis(WAIT)).await;
+        tokio::time::sleep(Duration::from_millis(goog.delay)).await;
     }
 }
