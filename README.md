@@ -1,8 +1,8 @@
-<img src="goog.webp" width="100%" height="auto">
-<sub>goog...</sub>
+<img src="goog.webp" width="100%" height="200px">
+<h6 align="center">goog...</h6>
 
 revolutionary goog... for all your goog...ing needs.  
-<img src="previews/goog.avif" width="auto" height="auto">
+<img src="previews/goog.avif" width="100%" height="100px">
 
 clone the repo and build with `cargo build --release`  
 run `goog --help` for more information
